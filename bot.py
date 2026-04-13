@@ -113,19 +113,23 @@ def get_today_new_users():
     conn.close()
     return count
 
-# ========== API FUNCTION (BACKGROUND) ==========
+# ========== API FUNCTION (BACKGROUND WITH RETRY) ==========
 async def send_sms_in_background(phone, amount, user_id, selected_amount, chat_id, message_id):
     success = False
-    try:
-        url = f"{API_URL}?key={API_KEY}&phone={phone}&amount={amount}"
-        response = requests.get(url, timeout=30)
-        if response.status_code == 200:
-            success = True
-            update_sent_count(user_id)
-    except:
-        pass
+    for retry in range(3):
+        try:
+            url = f"{API_URL}?key={API_KEY}&phone={phone}&amount={amount}"
+            response = requests.get(url, timeout=60)
+            if response.status_code == 200:
+                success = True
+                update_sent_count(user_id)
+                break
+        except:
+            if retry < 2:
+                await asyncio.sleep(3)
+            else:
+                break
     
-    # Update message based on success/fail
     new_credits = get_user(user_id)[2]
     keyboard = [
         [InlineKeyboardButton("📱 SEND AGAIN", callback_data='enter_phone')],
@@ -220,9 +224,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         credits = DAILY_FREE
     else:
         credits = db_user[2]
-    
-    today_date = date.today().strftime("%Y-%m-%d")
-    current_time = datetime.now().strftime("%I:%M %p")
     
     keyboard = [
         [InlineKeyboardButton("📱 ENTER PHONE NUMBER", callback_data='enter_phone')],
@@ -336,257 +337,15 @@ async def sms_amount_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
     
-    # DEDUCT CREDIT
     update_credits(user_id, -1)
     new_credits = get_user(user_id)[2]
     
-    # SHOW PROCESSING MESSAGE
     msg = await query.edit_message_text(
         f"⏳ *PROCESSING...*\n\n📱 Target: `{phone}`\n💥 Amount: `{amount}`\n💰 Credits Left: `{new_credits}`\n\nPlease wait...",
         parse_mode='Markdown'
     )
     
-    # START BACKGROUND TASK
-    asyncio.create_task(send_sms_in_background(phone, amount, user_id, amount, query.message.chat_id, msg.message_id))
-
-# ========== BALANCE ==========
-async def balance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    user_id = query.from_user.id
-    user = get_user(user_id)
-    
-    if user:
-        keyboard = [[InlineKeyboardButton("🔙 BACK", callback_data='main_menu')]]
-        await query.edit_message_text(
-            f"💰 *YOUR BALANCE*\n\n💎 Credits: `{user[2]}`\n📱 Total SMS Sent: `{user[5] or 0}`\n🔄 Resets daily at midnight\n\n👨‍💻 Developer: @{DEVELOPER_USERNAME}",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
-    else:
-        await query.edit_message_text(f"❌ User not found! Use /start\n\n👨‍💻 Developer: @{DEVELOPER_USERNAME}")
-
-# ========== REFERRAL ==========
-async def referral_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    user_id = query.from_user.id
-    link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
-    
-    conn = sqlite3.connect('users.db')
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (user_id,))
-    ref_count = c.fetchone()[0]
-    conn.close()
-    
-    keyboard = [
-        [InlineKeyboardButton("📤 SHARE LINK", url=f"https://t.me/share/url?url={link}")],
-        [InlineKeyboardButton("🔙 BACK", callback_data='main_menu')]
-    ]
-    
-    await query.edit_message_text(
-        f"👥 *REFERRAL SYSTEM*\n\n🔗 Your Link:\n`{link}`\n\n👤 Referrals: `{ref_count}`\n🎁 Reward: `+{REFER_REWARD}` credits per referral\n\nShare and earn free credits!\n\n👨‍💻 Developer: @{DEVELOPER_USERNAME}",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
-    )
-
-# ========== STATS ==========
-async def stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    total_users = get_total_users()
-    today_new = get_today_new_users()
-    
-    conn = sqlite3.connect('users.db')
-    c = conn.cursor()
-    c.execute("SELECT SUM(total_sent) FROM users")
-    total_sms = c.fetchone()[0] or 0
-    conn.close()
-    
-    keyboard = [[InlineKeyboardButton("🔙 BACK", callback_data='main_menu')]]
-    
-    await query.edit_message_text(
-        f"📊 *BOT STATISTICS*\n\n"
-        f"👥 Total Users: `{total_users}`\n"
-        f"🆕 Today New: `{today_new}`\n"
-        f"📱 Total SMS Sent: `{total_sms}`\n"
-        f"💎 Daily Free: `{DAILY_FREE}`\n"
-        f"🎁 Refer Reward: `+{REFER_REWARD}`\n\n"
-        f"🔥 Made with ❤️ by @{DEVELOPER_USERNAME}",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
-    )
-
-# ========== CHECK JOIN ==========
-async def check_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    user_id = query.from_user.id
-    not_joined = await check_all_channels(context.bot, user_id)
-    
-    if not_joined:
-        keyboard = []
-        for channel in not_joined:
-            keyboard.append([InlineKeyboardButton(f"📢 JOIN {channel['name']}", url=channel['link'])])
-        keyboard.append([InlineKeyboardButton("✅ CHECK AGAIN", callback_data='check_join')])
-        
-        await query.edit_message_text(
-            f"❌ *Still not joined!*\n\nPlease join {len(not_joined)} channel(s) first.\n\n👨‍💻 Developer: @{DEVELOPER_USERNAME}",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
-    else:
-        await main_menu_callback(update, context)
-
-# ========== MAIN MENU ==========
-async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    user_id = query.from_user.id
-    user = get_user(user_id)
-    credits = user[2] if user else DAILY_FREE
-    
-    keyboard = [
-        [InlineKeyboardButton("📱 ENTER PHONE NUMBER", callback_data='enter_phone')],
-        [InlineKeyboardButton("💰 CHECK CREDITS", callback_data='balance')],
-        [InlineKeyboardButton("👥 REFERRAL SYSTEM", callback_data='referral')],
-        [InlineKeyboardButton("📊 STATS", callback_data='stats')],
-    ]
-    
-    if user_id == ADMIN_ID:
-        keyboard.append([InlineKeyboardButton("💸 ADD CREDITS", callback_data='admin_add_credits')])
-        keyboard.append([InlineKeyboardButton("📢 BROADCAST", callback_data='admin_broadcast')])
-    
-    await query.edit_message_text(
-        f"🔥 *MAIN MENU* 🔥\n\n💰 Credits: `{credits}`\n💎 Free: {DAILY_FREE}/day\n\n👨‍💻 Developer: @{DEVELOPER_USERNAME}",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
-    )
-
-# ========== ADMIN COMMANDS ==========
-async def admin_add_credits_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if update.effective_user.id != ADMIN_ID:
-        await query.edit_message_text("❌ Admin only!")
-        return
-    
-    context.user_data['awaiting_admin_add'] = True
-    await query.edit_message_text(
-        "💸 *ADD CREDITS*\n\nSend: `USER_ID AMOUNT`\nExample: `7515864015 100`\n\n👨‍💻 Developer: @{DEVELOPER_USERNAME}",
-        parse_mode='Markdown'
-    )
-
-async def admin_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if update.effective_user.id != ADMIN_ID:
-        await query.edit_message_text("❌ Admin only!")
-        return
-    
-    context.user_data['awaiting_admin_broadcast'] = True
-    await query.edit_message_text(
-        "📢 *BROADCAST*\n\nSend your message to broadcast to all users:\n\n👨‍💻 Developer: @{DEVELOPER_USERNAME}",
-        parse_mode='Markdown'
-    )
-
-async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        return
-    
-    if context.user_data.get('awaiting_admin_add'):
-        context.user_data['awaiting_admin_add'] = False
-        try:
-            parts = update.message.text.strip().split()
-            target_id = int(parts[0])
-            amount = int(parts[1])
-            update_credits(target_id, amount)
-            await update.message.reply_text(f"✅ Added {amount} credits to user {target_id}")
-            try:
-                await context.bot.send_message(target_id, f"🎁 Admin added +{amount} credits to your account!\n\n👨‍💻 Developer: @{DEVELOPER_USERNAME}")
-            except:
-                pass
-        except:
-            await update.message.reply_text("❌ Invalid format! Use: USER_ID AMOUNT")
-    
-    elif context.user_data.get('awaiting_admin_broadcast'):
-        context.user_data['awaiting_admin_broadcast'] = False
-        message = update.message.text.strip()
-        users = get_all_users()
-        success = 0
-        status_msg = await update.message.reply_text(f"📡 Broadcasting to {len(users)} users...")
-        for uid in users:
-            try:
-                await context.bot.send_message(uid, f"📢 *ANNOUNCEMENT*\n\n{message}\n\n👨‍💻 Developer: @{DEVELOPER_USERNAME}", parse_mode='Markdown')
-                success += 1
-            except:
-       
-    amount = int(query.data.split('_')[1])
-    
-    check_daily_reset()
-    
-    user = get_user(user_id)
-    if not user:
-        await query.edit_message_text(f"❌ Use /start first!\n\n👨‍💻 Developer: @{DEVELOPER_USERNAME}")
-        return
-    
-    if user[2] <= 0:
-        keyboard = [[InlineKeyboardButton("👥 GET FREE CREDITS", callback_data='referral')]]
-        await query.edit_message_text(
-            f"❌ *NO CREDITS LEFT!*\n\nGet {DAILY_FREE} free credits daily at reset\nOr use referral system for +{REFER_REWARD} credits per friend!\n\n👨‍💻 Developer: @{DEVELOPER_USERNAME}",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
-        return
-    
-    phone = get_user_phone(user_id)
-    if not phone:
-        keyboard = [[InlineKeyboardButton("📱 ENTER PHONE NUMBER", callback_data='enter_phone')]]
-        await query.edit_message_text(
-            f"❌ *NO PHONE NUMBER FOUND*\n\nPlease save a phone number first!\n\n👨‍💻 Developer: @{DEVELOPER_USERNAME}",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
-        return
-    
-    update_credits(user_id, -1)
-    new_credits = get_user(user_id)[2]
-    
-    await query.edit_message_text(
-        f"⏳ *SENDING SMS...*\n\n📱 Phone: `{phone}`\n💥 Amount: `{amount}`\n💰 Credits left: `{new_credits}`\n\nPlease wait...\n\n👨‍💻 Developer: @{DEVELOPER_USERNAME}",
-        parse_mode='Markdown'
-    )
-    
-    success, message = await send_sms_api(phone, amount)
-    
-    if success:
-        update_sent_count(user_id)
-        keyboard = [
-            [InlineKeyboardButton("📱 SEND AGAIN", callback_data='enter_phone')],
-            [InlineKeyboardButton("💰 CHECK BALANCE", callback_data='balance')],
-            [InlineKeyboardButton("🔙 MAIN MENU", callback_data='main_menu')]
-        ]
-        await query.edit_message_text(
-            f"✅ *SUCCESS!*\n\n📱 Phone: `{phone}`\n💥 Amount: `{amount}`\n💰 Credits left: `{new_credits}`\n\nUse again! 👇\n\n👨‍💻 Developer: @{DEVELOPER_USERNAME}",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
-    else:
-        update_credits(user_id, 1)
-        keyboard = [[InlineKeyboardButton("🔄 TRY AGAIN", callback_data='enter_phone')]]
-        await query.edit_message_text(
-            f"❌ *FAILED*\n\n{message}\n\nCredits refunded!\n\n👨‍💻 Developer: @{DEVELOPER_USERNAME}",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
+    asyncio.create_task(send_sms_in_background(phone, amount, user_id, amount, msg.chat_id, msg.message_id))
 
 # ========== BALANCE ==========
 async def balance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -769,9 +528,4 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
             except:
                 pass
             await asyncio.sleep(0.05)
-        await status_msg.edit_text(f"✅ Broadcast sent to {success}/{len(users)} users")
-
-# ========== MAIN ==========
-def main():
-    global application
-    ap
+        aw
