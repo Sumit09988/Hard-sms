@@ -2,7 +2,6 @@ BOT_TOKEN = "8654296227:AAHeQF2L8_a5rbxK9CdhXqzJLKx81sccNKo"
 ADMIN_ID = 7515864015
 BOT_USERNAME = "HARDSMSBOMBEROBOT"
 
-# ========== DONO CHANNEL COMPULSORY (PUBLIC) ==========
 CHANNELS = [
     {"link": "https://t.me/SUMITNETW0RK", "username": "@SUMITNETW0RK", "name": "📢 MAIN CHANNEL"},
     {"link": "https://t.me/lokixnetwork", "username": "@lokixnetwork", "name": "🔥 LOKI NETWORK"}
