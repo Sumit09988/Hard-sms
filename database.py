@@ -14,7 +14,8 @@ def init_db():
                   last_reset DATE,
                   referrer_id INTEGER,
                   total_sent INTEGER DEFAULT 0,
-                  phone_number TEXT)''')
+                  phone_number TEXT,
+                  join_date DATE)''')
     c.execute('''CREATE TABLE IF NOT EXISTS referrals
                  (referrer_id INTEGER, referred_id INTEGER, date DATE)''')
     conn.commit()
@@ -32,8 +33,8 @@ def create_user(user_id, username, referrer_id=None):
     conn = sqlite3.connect('users.db')
     c = conn.cursor()
     today = date.today()
-    c.execute("INSERT INTO users (user_id, username, credits, last_reset, referrer_id) VALUES (?, ?, ?, ?, ?)",
-              (user_id, username, DAILY_FREE, today, referrer_id))
+    c.execute("INSERT INTO users (user_id, username, credits, last_reset, referrer_id, join_date) VALUES (?, ?, ?, ?, ?, ?)",
+              (user_id, username, DAILY_FREE, today, referrer_id, today))
     if referrer_id:
         c.execute("UPDATE users SET credits = credits + ? WHERE user_id=?", (REFER_REWARD, referrer_id))
         c.execute("INSERT INTO referrals VALUES (?, ?, ?)", (referrer_id, user_id, today))
@@ -96,3 +97,12 @@ def get_all_users():
     users = [row[0] for row in c.fetchall()]
     conn.close()
     return users
+
+def get_today_new_users():
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+    today = date.today()
+    c.execute("SELECT COUNT(*) FROM users WHERE join_date=?", (today,))
+    count = c.fetchone()[0]
+    conn.close()
+    return count
